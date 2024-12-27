@@ -4,7 +4,7 @@ import setuptools
 
 setup(
     name='pypuf',
-    version='3.2.1',
+    version='3.2.2',
     packages=setuptools.find_packages(),
     long_description=open('README.md').read(),
     long_description_content_type="text/markdown",
@@ -16,7 +16,7 @@ setup(
         'memory_profiler',
         'numpy>=1.18',
         'scipy>=1.5',
-        'tensorflow~=2.4.0',
+        #'tensorflow~=2.12.0',
         'more_itertools',
     ],
 )

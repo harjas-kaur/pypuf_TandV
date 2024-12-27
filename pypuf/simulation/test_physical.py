@@ -11,7 +11,7 @@ def main():
     mean_delay = 1e-9  
     std_delay = 1e-10  
     num_samples = 1000  
-
+    np.random.seed(42)
     delays = np.random.normal(mean_delay, std_delay, num_samples)
     print(f"Original Delays: Mean={np.mean(delays):.2e}, Std={np.std(delays):.2e}")
 
@@ -21,16 +21,19 @@ def main():
     physical_factors = PhysicalFactors(temperature=temperature, vdd=vdd)
 
     # Apply temperature dependencies
-    temperature_factor = physical_factors.temperature_dependencies()
+    print(physical_factors.process(Tfactor=True, Vfactor=False))
+    print(physical_factors.process(Tfactor=False, Vfactor=True))
+    temperature_factor = physical_factors.process(Tfactor=True, Vfactor=False)
     modified_delays_temperature = delays * temperature_factor
     print(f"After Temperature Adjustment: Mean={np.mean(modified_delays_temperature):.2e}, Std={np.std(modified_delays_temperature):.2e}")
 
     # Apply voltage dependencies
-    voltage_factor = physical_factors.voltage_dependencies()
+    voltage_factor=physical_factors.process(Tfactor=False, Vfactor=True)
     modified_delays_voltage = delays * voltage_factor
     print(f"After Voltage Adjustment: Mean={np.mean(modified_delays_voltage):.2e}, Std={np.std(modified_delays_voltage):.2e}")
 
     # Visualize the results
+
     plt.figure(figsize=(10, 6))
     plt.hist(delays, bins=30, alpha=0.5, label='Original Delays', color='blue')
     plt.hist(modified_delays_temperature, bins=30, alpha=0.5, label='Temperature Adjusted', color='green')
@@ -41,6 +44,7 @@ def main():
     plt.legend()
     plt.grid(True)
     plt.show()
+    
 
 if __name__ == "__main__":
     main()

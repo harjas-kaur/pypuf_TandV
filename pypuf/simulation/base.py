@@ -1,5 +1,5 @@
 #additional imports
-from temp_voltage import PhysicalFactors
+#from temp_voltage import PhysicalFactors
 
 """
 Simulations of Physically Unclonable Functions (PUFs).
@@ -12,6 +12,11 @@ from numpy import prod, sign, sqrt, append, empty, ceil, \
     concatenate, ndarray, transpose, broadcast_to, array
 from numpy.random import default_rng
 
+T_factor=False
+V_factor=False
+temperature = 50  
+vdd = 1.2 
+#physical_factors = PhysicalFactors(temperature=temperature, vdd=vdd)
 
 class Simulation:
     """
