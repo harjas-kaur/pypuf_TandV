@@ -1,5 +1,5 @@
 #additional imports
-from temp_voltage import PhysicalFactors
+from .temp_voltage import PhysicalFactors
 
 """
 Simulations of Physically Unclonable Functions (PUFs).
