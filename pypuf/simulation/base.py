@@ -12,11 +12,11 @@ from numpy import prod, sign, sqrt, append, empty, ceil, \
     concatenate, ndarray, transpose, broadcast_to, array
 from numpy.random import default_rng
 
-T_factor=False
-V_factor=False
+T_factor=True
+V_factor=True
 temperature = 50  
 vdd = 1.2 
-#physical_factors = PhysicalFactors(temperature=temperature, vdd=vdd)
+physical_factors = PhysicalFactors(temperature=temperature, vdd=vdd,Tfactor=T_factor, Vfactor=V_factor)
 
 class Simulation:
     """
@@ -296,7 +296,8 @@ class LTFArray(Simulation):
         mean and std. deviation, if parameters are omitted, the
         standard normal distribution is used.
         """
-        return default_rng(seed).normal(loc=mu, scale=sigma, size=(k, n))
+        #########################################
+        return [default_rng(seed).normal(loc=mu, scale=sigma, size=(k, n))*(PhysicalFactors.process(T_factor, V_factor))]
 
     def __init__(self, weight_array: ndarray, transform: Union[str, Callable], combiner: Union[str, Callable] = 'xor',
                  bias: ndarray = None) -> None:

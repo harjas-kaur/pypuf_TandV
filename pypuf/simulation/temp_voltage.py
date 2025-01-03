@@ -13,6 +13,8 @@ class PhysicalFactors:
         - temperature (float): Environmental temperature in °C (default 20).
         - vdd (float): Supply voltage in volts (default 1.35).
         """
+        if Tfactor and Vfactor:
+            raise Exception("Error: Combined function not yet defined.")
         if not (0 <= temperature <= 150):
             raise ValueError("Temperature should be between 0°C and 150°C.")
         if not (0.5 <= vdd <= 5):
@@ -51,14 +53,14 @@ class PhysicalFactors:
 
         return numerator / divisor
 
-    def process(self, Tfactor=True, Vfactor=False) -> float:
+    def process(self, Tfactor, Vfactor) -> float:
+        '''
+        To Do: Include logic for combined factors, remove exception from "__init__".
+        '''
         if Tfactor and not Vfactor:
             return self.temperature_dependencies()
         elif not Tfactor and Vfactor:
             return self.voltage_dependencies()
-        elif Tfactor and Vfactor:
-            print("Error: Combined function not yet defined.")
-            return 1
         elif not Tfactor and not Vfactor:
             return 1  
 

@@ -23,7 +23,7 @@ def main():
     # Apply temperature dependencies
     print(physical_factors.process(Tfactor=True, Vfactor=False))
     print(physical_factors.process(Tfactor=False, Vfactor=True))
-    temperature_factor = physical_factors.process(Tfactor=True, Vfactor=False)
+    temperature_factor = physical_factors.process(Tfactor=True, Vfactor=True)
     modified_delays_temperature = delays * temperature_factor
     print(f"After Temperature Adjustment: Mean={np.mean(modified_delays_temperature):.2e}, Std={np.std(modified_delays_temperature):.2e}")
 
