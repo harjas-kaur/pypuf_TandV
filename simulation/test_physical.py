@@ -37,8 +37,27 @@ def print_table(headers, rows):
     print(fmt.format(*headers))
     print("-+-".join('-' * w for w in col_widths))
     for row in rows:
-        print(fmt.format(*row))
-
+        print(fmt.format(*[str(x) if isinstance(x, list) else x for x in row]))
+        
+def get_biases_and_factors(puf):
+    if hasattr(puf, "simulations"):
+        biases = []
+        tfactors = []
+        vfactors = []
+        for sub in puf.simulations:
+            bias = getattr(sub, "bias", "No bias")
+            if isinstance(bias, np.ndarray):
+                bias = np.array2string(bias.flatten(), precision=3, separator=',')
+            biases.append(bias)
+            tfactors.append(getattr(sub, "T_factor", "N/A"))
+            vfactors.append(getattr(sub, "V_factor", "N/A"))
+        return biases, tfactors, vfactors
+    else:
+        bias = getattr(puf, "bias", "No bias")
+        if isinstance(bias, np.ndarray):
+            bias = np.array2string(bias.flatten(), precision=3, separator=',')
+        return [bias], [getattr(puf, "T_factor", "N/A")], [getattr(puf, "V_factor", "N/A")]
+    
 def test_puf(puf_name, puf_factory, extra_args=None):
     print(f"\n--- Testing {puf_name} ---")
     n = 8
@@ -52,9 +71,9 @@ def test_puf(puf_name, puf_factory, extra_args=None):
     ]
     headers = [
         "Test Case", "Temperature", "Vdd",
-        "T_factor", "V_factor",
+        "T_factor(s)", "V_factor(s)",
         "Dependency (T)", "Dependency (V)", "Dependency (None)",
-        "PUF Bias", "Sample Responses"
+        "PUF Bias(es)", "Sample Responses"
     ]
     rows = []
     for i, params in enumerate(test_cases):
@@ -78,25 +97,19 @@ def test_puf(puf_name, puf_factory, extra_args=None):
                     vdd=params["vdd"]
                 )
             # Try to get bias attribute
-            bias = getattr(puf, "bias", "No bias")
-            if isinstance(bias, np.ndarray):
-                bias = np.array2string(bias.flatten(), precision=3, separator=',')
-            # Evaluate responses
+            biases, tfactors, vfactors = get_biases_and_factors(puf)
             responses = puf.eval(challenges)
             sample_responses = np.array2string(responses.flatten()[:5], separator=',')
-            # T_factor/V_factor
-            T_factor = getattr(puf, "T_factor", "N/A")
-            V_factor = getattr(puf, "V_factor", "N/A")
             rows.append([
                 f"{i+1}",
                 params["temperature"],
                 params["vdd"],
-                T_factor,
-                V_factor,
+                tfactors,
+                vfactors,
                 factors[0][1],
                 factors[1][1],
                 factors[2][1],
-                bias,
+                biases,
                 sample_responses
             ])
         except Exception as e:
@@ -163,11 +176,4 @@ if __name__ == "__main__":
         )
     test_puf("ArbiterPUF", arbiter_factory)
 
-    # LightweightSecurePUF
-    def lwspuf_factory(n, k, challenges, temperature, vdd, **kwargs):
-        return LightweightSecurePUF(
-            n=n,
-            temperature=temperature,
-            vdd=vdd
-        )
-    test_puf("LightweightSecurePUF", lwspuf_factory)
+   

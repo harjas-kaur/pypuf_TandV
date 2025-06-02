@@ -111,11 +111,13 @@ class XORArbiterPUF(NoisyLTFArray):
         weight_rng = default_rng(self.seed(f'xor arbiter puf {seed} weights'))
         noise_seed = self.seed(f'xor arbiter puf {seed} noise')
 
-        # Auto-detect T_factor and V_factor if not explicitly set
-        if T_factor is None:
-            T_factor = temperature != 20
-        if V_factor is None:
-            V_factor = vdd != 1.35
+        # Set T_factor and V_factor based on specified temperature and voltage values
+        T_factor = (temperature is not None and temperature != 20)
+        V_factor = (vdd is not None and vdd != 1.35)
+
+        # If T_factor and V_factor are always zero, bias will not be updated for temperature/vdd effects.
+        # If you want bias to be updated based on temperature/vdd, you need to implement that logic here.
+        # Currently, the bias is always generated as a normal distribution with loc=0, scale=.5.
 
         super().__init__(
             weight_array=np.concatenate((
@@ -135,25 +137,6 @@ class XORArbiterPUF(NoisyLTFArray):
             vdd=vdd,
             T_factor=T_factor,
             V_factor=V_factor,
-        )
-        if seed is None:
-            seed = 'default'
-        weight_rng = default_rng(self.seed(f'xor arbiter puf {seed} weights'))
-        noise_seed = self.seed(f'xor arbiter puf {seed} noise')
-        super().__init__(
-            weight_array=np.concatenate((
-                weight_rng.normal(loc=0, scale=.5, size=(k, 1)),
-                weight_rng.normal(loc=0, scale=1, size=(k, n - 1)),
-            ), axis=1),
-            bias=weight_rng.normal(loc=0, scale=.5, size=(k,)),
-            transform=transform or self.transform_atf,
-            combiner=self.combiner_xor,
-            sigma_noise=self.sigma_noise_from_random_weights(
-                n=n,
-                sigma_weight=1,
-                noisiness=noisiness,
-            ),
-            seed=noise_seed,
         )
 
     def chain(self, idx: int) -> Simulation:
