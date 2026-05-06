@@ -19,7 +19,8 @@ class SimulationMajorityLTFArray(NoisyLTFArray):
     """
 
     def __init__(self, weight_array: ndarray, transform: Union[Callable, str], combiner: Union[Callable, str],
-                 sigma_noise: float, seed: int, vote_count: int = 1, bias: ndarray = None) -> None:
+                 sigma_noise: float, seed: int, vote_count: int = 1, bias: ndarray = None,
+                 temperature: float = None, vdd: float = None, T_factor: bool = None, V_factor: bool = None) -> None:
         """
         :param weight_array: array of floats with shape(k,n)
                             Array of weights which represents the PUF stage delays.
@@ -40,7 +41,18 @@ class SimulationMajorityLTFArray(NoisyLTFArray):
         """
         assert vote_count % 2 == 1  # majority vote only works with an odd number of votes
         self.vote_count = vote_count
-        super().__init__(weight_array, transform, combiner, sigma_noise, seed, bias=bias)
+        super().__init__(
+            weight_array,
+            transform,
+            combiner,
+            sigma_noise,
+            seed,
+            bias=bias,
+            temperature=temperature,
+            vdd=vdd,
+            T_factor=T_factor,
+            V_factor=V_factor,
+        )
 
     def eval(self, challenges: ndarray, block_size: int = None) -> ndarray:
         # TODO Add block-wise eval support. It seems to work, but it changes the noise, as the noise PRNG will be called
@@ -105,11 +117,20 @@ class XORArbiterPUF(NoisyLTFArray):
         return transpose(broadcast_to(transpose(sub_challenges, axes=(1, 0, 2)), (k, N, n)), axes=(1, 0, 2))
 
     def __init__(self, n: int, k: int, seed: int = None, transform: Union[Callable, str] = None,
-                 noisiness: float = 0) -> None:
+                 noisiness: float = 0, temperature: float = None, vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None) -> None:
         if seed is None:
             seed = 'default'
         weight_rng = default_rng(self.seed(f'xor arbiter puf {seed} weights'))
         noise_seed = self.seed(f'xor arbiter puf {seed} noise')
+
+        # Set T_factor and V_factor based on specified temperature and voltage values
+        T_factor = (temperature is not None)
+        V_factor = (vdd is not None)
+
+        # If T_factor and V_factor are always zero, bias will not be updated for temperature/vdd effects.
+        # If you want bias to be updated based on temperature/vdd, you need to implement that logic here.
+        # Currently, the bias is always generated as a normal distribution with loc=0, scale=.5.
+
         super().__init__(
             weight_array=np.concatenate((
                 weight_rng.normal(loc=0, scale=.5, size=(k, 1)),
@@ -124,6 +145,12 @@ class XORArbiterPUF(NoisyLTFArray):
                 noisiness=noisiness,
             ),
             seed=noise_seed,
+            temperature=temperature,
+            vdd=vdd,
+            m=m,
+            alpha=alpha,
+            T_factor=T_factor,
+            V_factor=V_factor,
         )
 
     def chain(self, idx: int) -> Simulation:
@@ -138,6 +165,11 @@ class XORArbiterPUF(NoisyLTFArray):
             transform=self.transform,
             combiner=self.combiner,
             bias=self.weight_array[idx:idx + 1, -1],
+            temperature=getattr(self, 'temperature', None),
+            vdd=getattr(self, 'vdd', None),
+            T_factor=getattr(self, 'T_factor', None),
+            V_factor=getattr(self, 'V_factor', None),
+            scale_bias=getattr(self, 'scale_bias', False),
         )
 
 
@@ -147,7 +179,7 @@ class FeedForwardArbiterPUF(NoisyLTFArray):
     """
 
     def __init__(self, n: int, ff: List[Tuple[int, int]], seed: int = None,
-                 noisiness: float = 0) -> None:
+                 noisiness: float = 0.05, temperature: float = None, vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None) -> None:
         """
         Initialize a Feed-Forward Arbiter PUF Simulation.
 
@@ -173,9 +205,23 @@ class FeedForwardArbiterPUF(NoisyLTFArray):
         self.noise_prng = default_rng(noise_seed)
         self.ff = ff
         self.noisiness = noisiness
+        
+        # Auto-detect T_factor and V_factor if not explicitly set
+        if T_factor is None:
+            T_factor = temperature != 20
+        if V_factor is None:
+            V_factor = vdd != 1.35
 
         super().__init__(
-            weight_array=self.normal_weights(n=n + len(ff), k=1, seed=weight_seed),
+            weight_array=self.normal_weights(
+                n=n + len(ff),
+                k=1,
+                seed=weight_seed,
+                T_factor=T_factor,
+                V_factor=V_factor,
+                temperature=temperature,
+                vdd=vdd,
+            ),
             # TODO the weights used here are slightly inaccurate, but it's unclear to me how the model exhibited
             #  in ia.cr/2021/555, Corollary 1 can be extended to cover FF PUFs. Given how marginal the difference
             #  is, it is reasonable to assume that this won't make significant differences to the success of modeling
@@ -187,6 +233,12 @@ class FeedForwardArbiterPUF(NoisyLTFArray):
                 sigma_weight=1,
                 noisiness=noisiness,
             ),
+            temperature=temperature,
+            vdd=vdd,
+            m=m,
+            alpha=alpha,
+            T_factor=T_factor,
+            V_factor=V_factor,
             seed=noise_seed,
         )
 
@@ -227,6 +279,11 @@ class FeedForwardArbiterPUF(NoisyLTFArray):
                     noisiness=self.noisiness,
                 ),
                 seed=self.noise_prng.integers(2**32),
+                temperature=getattr(self, 'temperature', None),
+                vdd=getattr(self, 'vdd', None),
+                T_factor=getattr(self, 'T_factor', None),
+                V_factor=getattr(self, 'V_factor', None),
+                scale_bias=getattr(self, 'scale_bias', False),
             )
 
             # select section of applied challenge
@@ -254,7 +311,7 @@ class XORFeedForwardArbiterPUF(XORPUF):
     """
 
     def __init__(self, n: int, k: int, ff: Union[List[List[Tuple[int, int]]], List[Tuple[int, int]]], seed: int = None,
-                 noisiness: float = 0) -> None:
+                 noisiness: float = 0, temperature: float = None, vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None) -> None:
         """
         Initialize an XOR Feed-Forward Arbiter PUF Simulation.
 
@@ -273,6 +330,12 @@ class XORFeedForwardArbiterPUF(XORPUF):
         """
         if seed is None:
             seed = 'default'
+        
+        # Auto-detect T_factor and V_factor if not explicitly set
+        if T_factor is None:
+            T_factor = temperature != 20
+        if V_factor is None:
+            V_factor = vdd != 1.35
 
         if not ff:
             ff = [[]]
@@ -285,17 +348,35 @@ class XORFeedForwardArbiterPUF(XORPUF):
                 ff=ff[l],
                 seed=self.seed(f"XORFeedForwardArbiterPUF {seed} {l}"),
                 noisiness=noisiness,
+                temperature=temperature,
+                vdd=vdd,
+                m=m,
+                alpha=alpha,
+                T_factor=T_factor,
+                V_factor=V_factor,
             )
             for l in range(k)
         ]
-
         super().__init__(ff_pufs)
 
 
 class ArbiterPUF(XORArbiterPUF):
 
-    def __init__(self, n: int, seed: int = None, transform: Union[Callable, str] = None, noisiness: float = 0) -> None:
-        super().__init__(n, 1, seed, transform, noisiness)
+    def __init__(self, n: int, seed: int = None, transform: Union[Callable, str] = None, noisiness: float = 0,temperature: float = None,
+        vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None ) -> None:
+        super().__init__(
+            n=n,
+            k=1,
+            seed=seed,
+            transform=transform,
+            noisiness=noisiness,
+            temperature=temperature,
+            vdd=vdd,
+            m=m,
+            alpha=alpha,
+            T_factor=T_factor,
+            V_factor=V_factor,
+        )
 
 
 class LightweightSecurePUF(XORArbiterPUF):
@@ -360,8 +441,8 @@ class LightweightSecurePUF(XORArbiterPUF):
         assert sub_challenges.shape == (N, k, n), 'The resulting challenges do not have the desired shape.'
         return sub_challenges
 
-    def __init__(self, n: int, k: int, seed: int = None, noisiness: float = 0) -> None:
-        super().__init__(n, k, seed, self.transform_lightweight_secure, noisiness)
+    def __init__(self, n: int, k: int, seed: int = None, noisiness: float = 0, temperature: float = None, vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None) -> None:
+        super().__init__(n, k, seed, self.transform_lightweight_secure, noisiness, temperature=temperature, vdd=vdd, m=m, alpha=alpha, T_factor=T_factor, V_factor=V_factor)
 
 
 class RandomTransformationPUF(XORArbiterPUF):
@@ -606,8 +687,8 @@ class PermutationPUF(XORArbiterPUF):
 
         return permutation_seeds
 
-    def __init__(self, n: int, k: int, seed: int = None, noisiness: float = 0) -> None:
-        super().__init__(n, k, seed, self.transform_fixed_permutation, noisiness)
+    def __init__(self, n: int, k: int, seed: int = None, noisiness: float = 0, temperature: float = None, vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None) -> None:
+        super().__init__(n, k, seed, self.transform_fixed_permutation, noisiness, temperature=temperature, vdd=vdd, m=m, alpha=alpha, T_factor=T_factor, V_factor=V_factor)
 
 
 class InterposePUF(Simulation):
@@ -619,14 +700,23 @@ class InterposePUF(Simulation):
     """
 
     def __init__(self, n: int, k_down: int, k_up: int = 1, interpose_pos: int = None, seed: int = None,
-                 noisiness: float = 0) -> None:
+                 noisiness: float = 0.05, temperature: float = None, vdd: float = None, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None) -> None:
         super().__init__()
         if seed is None:
             seed = 'default'
         seed_up = self.seed(f'interpose puf {seed} up')
         seed_down = self.seed(f'interpose puf {seed} down')
-        self.up = XORArbiterPUF(n, k_up, seed_up, XORArbiterPUF.transform_atf, noisiness)
-        self.down = XORArbiterPUF(n + 1, k_down, seed_down, XORArbiterPUF.transform_atf, noisiness)
+        # Auto-detect T_factor and V_factor if not explicitly set
+        if T_factor is None:
+            T_factor = temperature != 20 if temperature is not None else False
+        if V_factor is None:
+            V_factor = vdd != 1.35 if vdd is not None else False
+
+        # Pass temperature and vdd through to the XORArbiterPUF instances
+        self.up = XORArbiterPUF(n=n, k=k_up, seed=seed_up, transform=XORArbiterPUF.transform_atf,
+                                noisiness=noisiness, temperature=temperature, vdd=vdd, m=m, alpha=alpha, T_factor=T_factor, V_factor=V_factor)
+        self.down = XORArbiterPUF(n=n + 1, k=k_down, seed=seed_down, transform=XORArbiterPUF.transform_atf,
+                                  noisiness=noisiness, temperature=temperature, vdd=vdd, m=m, alpha=alpha, T_factor=T_factor, V_factor=V_factor)
         self.interpose_pos = interpose_pos or n // 2
 
     @property

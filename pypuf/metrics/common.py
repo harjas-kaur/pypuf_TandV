@@ -250,6 +250,27 @@ def accuracy(simulation: Simulation, test_set: ChallengeResponseSet) -> np.ndarr
     return similarity_data(sim_responses, test_set.responses)
 
 
+def reliability_at_point(puf_instance: Simulation, reference_crps: ChallengeResponseSet) -> np.ndarray:
+    r"""
+    Calculates the reliability of a given PUF instance against a reference ChallengeResponseSet.
+
+    This function is useful for determining a PUF's stability at a specific operational point (e.g. a given
+    temperature and voltage), by comparing its responses to a pre-recorded, "golden" set of responses.
+
+    The calculation is equivalent to :func:`accuracy`, measuring the bitwise similarity.
+
+    :param puf_instance: The PUF simulation instance, configured at the desired operational point.
+    :param reference_crps: A ChallengeResponseSet containing the reference responses, typically generated
+                           under nominal operating conditions.
+    :return: An array of shape :math:`(m,)` containing the reliability for each response bit.
+    """
+    # Evaluate the PUF instance with the challenges from the reference set
+    instance_responses = puf_instance.eval(reference_crps.challenges)
+
+    # Compare the generated responses with the reference responses
+    return similarity_data(instance_responses, reference_crps.responses)
+
+
 def similarity(instance1: Simulation, instance2: Simulation, seed: int, N: int = 1000) -> np.ndarray:
     r"""
     Approximate the similarity in response behavior of two simulations with identical challenge and response length,

@@ -1,3 +1,6 @@
+#additional imports
+from .temp_voltage import PhysicalFactors
+
 """
 Simulations of Physically Unclonable Functions (PUFs).
 """
@@ -8,7 +11,6 @@ from numpy import prod, sign, sqrt, append, empty, ceil, \
     ones, zeros, reshape, einsum, int8, \
     concatenate, ndarray, transpose, broadcast_to, array
 from numpy.random import default_rng
-
 
 class Simulation:
     """
@@ -39,10 +41,15 @@ class Simulation:
         """
         raise NotImplementedError()
 
-    def r_eval(self, r: int, challenges: ndarray) -> ndarray:
+    def r_eval(self, r: int, challenges: ndarray, temperature: float = None, vdd: float = None,
+               T_factor: Optional[bool] = None, V_factor: Optional[bool] = None) -> ndarray:
         """
         Evaluates the Simulation ``r`` times on the list of :math:`N` ``challenges`` given and returns an array
         of shape (``r``, :math:`N`, ``self.response_length``) of all responses.
+
+        Optional parameters ``temperature``, ``vdd``, ``T_factor`` and ``V_factor`` may be provided to temporarily
+        override the simulation's environmental settings for the duration of this call. The original attributes are
+        restored afterwards.
 
         >>> from pypuf.simulation import XORArbiterPUF
         >>> from pypuf.io import random_inputs
@@ -61,11 +68,33 @@ class Simulation:
             array([[-0.2],
                    [ 1. ]])
         """
-        N = challenges.shape[0]
-        responses = empty(shape=(N, self.response_length, r))
-        for i in range(r):
-            responses[:, :, i] = self.eval(challenges).reshape(N, self.response_length)
-        return responses
+        # Optionally override environmental parameters for the duration of this call
+        old_vals = {}
+        if any(x is not None for x in (temperature, vdd, T_factor, V_factor)):
+            old_vals['temperature'] = getattr(self, 'temperature', None)
+            old_vals['vdd'] = getattr(self, 'vdd', None)
+            old_vals['T_factor'] = getattr(self, 'T_factor', None)
+            old_vals['V_factor'] = getattr(self, 'V_factor', None)
+            if temperature is not None:
+                setattr(self, 'temperature', temperature)
+            if vdd is not None:
+                setattr(self, 'vdd', vdd)
+            if T_factor is not None:
+                setattr(self, 'T_factor', T_factor)
+            if V_factor is not None:
+                setattr(self, 'V_factor', V_factor)
+
+        try:
+            N = challenges.shape[0]
+            responses = empty(shape=(N, self.response_length, r))
+            for i in range(r):
+                responses[:, :, i] = self.eval(challenges).reshape(N, self.response_length)
+            return responses
+        finally:
+            # restore original environment attributes if they were changed
+            if old_vals:
+                for k, v in old_vals.items():
+                    setattr(self, k, v)
 
     @staticmethod
     def seed(description: str) -> int:
@@ -281,20 +310,50 @@ class LTFArray(Simulation):
             sub_challenges[:, :, i] *= sub_challenges[:, :, i + 1]
 
     @classmethod
-    def normal_weights(cls, n: int, k: int, seed: int, mu: float = 0, sigma: float = 1) -> ndarray:
+    def normal_weights(cls, n: int, k: int, seed: int, mu: float = 0, sigma: float = 1, *, T_factor: bool, V_factor: bool, temperature: float, vdd: float) -> ndarray:
         """
         Returns weights for an array of k LTFs of size n each.
         The weights are drawn from a normal distribution with given
         mean and std. deviation, if parameters are omitted, the
         standard normal distribution is used.
+        No physical factor or bias is applied here; bias logic is handled in __init__.
         """
         return default_rng(seed).normal(loc=mu, scale=sigma, size=(k, n))
 
-    def __init__(self, weight_array: ndarray, transform: Union[str, Callable], combiner: Union[str, Callable] = 'xor',
-                 bias: ndarray = None) -> None:
+    def __init__(self, weight_array: ndarray, transform: Union[str, Callable], temperature: float= None, vdd: float=None, m: float = 1.5, alpha: float = 1.2, T_factor: bool =None, V_factor: bool=None, combiner: Union[str, Callable] = 'xor',
+                 bias: ndarray = None, scale_bias: bool = False) -> None:
+        """
+        Initializes the LTFArray with weights, transform, combiner, bias, temperature, vdd, T_factor, and V_factor.
+        :param weight_array: ndarray of shape (k, n)
+        :param transform: input transformation (callable or str)
+        :param combiner: combiner function (callable or str)
+        :param bias: None, float, or ndarray of shape (k, 1) or (k,)
+        :param temperature: temperature value (float)
+        :param vdd: supply voltage value (float)
+        :param m: temperature mobility exponent
+        :param alpha: velocity saturation index
+        :param T_factor: whether to apply temperature factor (bool)
+        :param V_factor: whether to apply voltage factor (bool)
+        """
 
+        # Set T_factor and V_factor only if not provided
+        if T_factor is None:
+            T_factor = False
+        if V_factor is None:
+            V_factor = False
+
+        # Store parameters
         self.weight_array = weight_array
+        self.temperature = temperature
+        self.vdd = vdd
+        self.m = m
+        self.alpha = alpha
+        self.T_factor = T_factor
+        self.V_factor = V_factor
+        # Whether to apply the same physical scaling to the bias term
+        self.scale_bias = bool(scale_bias)
 
+        # Set the input transformation function
         if isinstance(transform, str):
             if not transform.startswith('transform_'):
                 transform = 'transform_' + transform
@@ -302,6 +361,7 @@ class LTFArray(Simulation):
         else:
             self.transform = transform
 
+        # Set the combiner function
         if isinstance(combiner, str):
             if not combiner.startswith('combiner_'):
                 combiner = 'combiner_' + combiner
@@ -309,20 +369,29 @@ class LTFArray(Simulation):
         else:
             self.combiner = combiner
 
-        # If necessary, convert bias definition
-        if bias is None:
-            self.bias = zeros(shape=(self.k, 1))
-        elif isinstance(bias, float):
-            self.bias = bias * ones(shape=(self.k, 1))
-        elif isinstance(bias, ndarray) or isinstance(bias, list) and array(bias).shape == (self.k, ):
-            self.bias = reshape(array(bias), (self.k, 1))
-        else:
-            self.bias = bias if isinstance(bias, ndarray) else array(bias)
+        k = self.weight_array.shape[0]
 
-        # Append bias values to weight array
-        assert self.bias.shape == (self.k, 1), \
+        # Compute the physical factor for bias adjustment using the provided temperature, vdd, and debug flags
+        #physical_factors = PhysicalFactors(temperature=self.temperature, vdd=self.vdd, Tfactor=self.T_factor, Vfactor=self.V_factor)
+        #bias_factor = physical_factors.process(self.T_factor, self.V_factor)
+
+        # Prepare the bias array according to the input
+        if bias is None:
+            self.bias = zeros(shape=(k, 1))
+        elif isinstance(bias, float) or isinstance(bias, int):
+            self.bias = bias * ones(shape=(k, 1))
+        elif isinstance(bias, ndarray) or (isinstance(bias, list) and array(bias).shape == (k,)):
+            self.bias = reshape(array(bias), (k, 1))
+        else:
+            self.bias = array(bias) if not isinstance(bias, ndarray) else bias
+
+        # Apply the physical factor to the bias
+        #self.bias = self.bias * bias_factor
+
+        # Append bias values to weight array as the last column
+        assert self.bias.shape == (k, 1), \
             'Expected bias to either have shape ({}, 1) or be a float, ' \
-            'but got an array with shape {} and value {}.'.format(self.k, self.bias.shape, self.bias)
+            'but got an array with shape {} and value {}.'.format(k, self.bias.shape, self.bias)
         self.weight_array = append(self.weight_array, self.bias, axis=1)
 
     @property
@@ -403,16 +472,30 @@ class LTFArray(Simulation):
         :param sub_challenges: array of sub-challenges of shape :math:`(N,k,n)`
         :return: array of individual LTF values as floats, shape :math:`(N,k)`
         """
-        k, n = self.weight_array.shape
-        n -= 1
+        k, n_plus_1 = self.weight_array.shape
+        n = n_plus_1 - 1
 
         assert sub_challenges.shape[1:] == (k, n), \
-            f'Sub-challenges given to ltf_eval had shape {sub_challenges.shape}, but shape (N, k, n) = ' \
-            f'(N, {k}, {n}) was expected.'
+            f'Sub-challenges shape {sub_challenges.shape} does not match expected (N, {k}, {n}).'
 
-        unbiased = einsum('ji,...ji->...j', self.weight_array[:, :-1], sub_challenges, optimize=True)
+        # 1. Calculate the environmental scaling factor dynamically
+        physical_factors = PhysicalFactors(temperature=self.temperature, vdd=self.vdd, m=self.m, alpha=self.alpha)
+        scaling_factor = physical_factors.process(Tfactor=self.T_factor, Vfactor=self.V_factor)
+
+        # 2. Apply the scaling factor to the main delay weights (all columns except the last one)
+        # The scaling_factor must be broadcastable to the shape of the weights.
+        weights = self.weight_array[:, :-1]
+        scaled_weights = weights * scaling_factor
+
+        # 3. Perform the calculation with the newly scaled weights
+        unbiased_scaled_sum = einsum('ji,...ji->...j', scaled_weights, sub_challenges, optimize=True)
+        
+        # 4. Add the bias. Optionally scale it by the same physical factor used for weights.
         bias = self.weight_array[:, -1]
-        return unbiased + bias
+        if getattr(self, 'scale_bias', False):
+            # scaling_factor may be scalar or shape (k,1) broadcastable to bias
+            bias = bias * scaling_factor
+        return unbiased_scaled_sum + bias
 
 
 class NoisyLTFArray(LTFArray):
@@ -429,18 +512,25 @@ class NoisyLTFArray(LTFArray):
         """
         return sqrt(n) * sigma_weight * noisiness
 
-    def __init__(self, weight_array: ndarray, transform: Union[Callable, str], combiner: Union[Callable, str],
-                 sigma_noise: float, seed: int, bias: ndarray = None) -> None:
-        """
-        Initializes LTF array like in LTFArray and uses the provided
-        PRNG instance for drawing noise values. If no PRNG provided, a
-        fresh instance is used.
-        :param bias: None, float or a two dimensional array of float with shape (k, 1)
-                     This bias value or array of bias values will be appended to the weight_array.
-                     Use a single value if you want the same bias for all weight_vectors.
-        """
-        super().__init__(weight_array, transform, combiner, bias)
+    def __init__(self, weight_array, bias=None, transform=None, combiner='xor',
+                 sigma_noise=0, seed=None,
+                 temperature: float = 20, vdd: float = 1.35, m: float = 1.5, alpha: float = 1.2, T_factor: bool = None, V_factor: bool = None,
+                 scale_bias: bool = False):
+        super().__init__(
+            weight_array=weight_array,
+            bias=bias,
+            transform=transform,
+            combiner=combiner,
+            temperature=temperature,
+            vdd=vdd,
+            m=m,
+            alpha=alpha,
+            T_factor=T_factor,
+            V_factor=V_factor,
+            scale_bias=scale_bias,
+        )
         self.sigma_noise = sigma_noise
+        self._seed = seed
         self.random = default_rng(seed)
 
     def ltf_eval(self, sub_challenges: ndarray) -> ndarray:
