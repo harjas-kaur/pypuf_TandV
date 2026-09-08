@@ -188,7 +188,3 @@ Harjas Kaur — [harjaskaurbassi@gmail.com](mailto:harjaskaurbassi@gmail.com)
 [GitHub](https://github.com/harjas-kaur) ·
 [LinkedIn](https://www.linkedin.com/in/harjas-kaur-bassi/)
 
-## License
-
-[[ Add a license — pypuf itself is GPL-3.0; consider matching it if this
-repository derives from pypuf's source. ]]
